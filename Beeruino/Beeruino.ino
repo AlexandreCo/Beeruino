@@ -8,6 +8,7 @@
 #include <hyst.h>
 #include <AnalogButton.h>
 #include <LiquidCrystal.h>
+#include <EEPROM.h>
 
 DS7505 ds7505 = DS7505();
 LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
@@ -23,6 +24,8 @@ typedef enum{
     eciStateConfigHyst,
     eciStateInitAbout,
     eciStateAbout,
+    eciStateInitEEpromRead,
+    eciStateEEpromRead,
 }eState_t;
 
 eState_t eState=eciStateDisplay;
@@ -32,14 +35,15 @@ eState_t eState=eciStateDisplay;
 #define cuchHystDfg  100
 
 typedef struct{
-    uint8_t uchBdt;
+    uint16_t ushBdt;
     int iTemp;
+    uint16_t ushAddrEEpromWrite;
+    uint16_t ushAddrEEpromRead;
 }sData_t;
 
 sData_t sPriv;
 
-void setup()
-{
+void setup(){
     Wire.begin();        // join i2c bus (address optional for master)
     Serial.begin(9600);  // start serial for output
     ds7505.config(7, R12BITS);
@@ -47,31 +51,41 @@ void setup()
     lcd.clear();
     hyst.setCsg(ciCsgDfg);
     hyst.setHyst(cuchHystDfg);
+    sPriv.ushAddrEEpromWrite=0;
 }
 
 
-void loop()
-{
+void loop(){
+    sPriv.ushBdt++;
     vGetTemp();
-    vSerialDisplayTemp(sPriv.iTemp);
     vState();
     hyst.run(sPriv.iTemp);
+    vSaveTemp(sPriv.iTemp);
     delay(50);
+}
 
+void vSaveTemp(int iTemp){
+    if(!(sPriv.ushBdt%300)){
+        vSerialDisplayTemp(iTemp);
+        EEPROM.update(sPriv.ushAddrEEpromWrite, iTemp/100);
+        sPriv.ushAddrEEpromWrite++;
+        if (sPriv.ushAddrEEpromWrite >= EEPROM.length()) {
+            sPriv.ushAddrEEpromWrite = 0;
+        }
+    }
 }
 
 void vGetTemp(){
-    sPriv.uchBdt++;
-    if(!(sPriv.uchBdt%20)){
+    if(!(sPriv.ushBdt%20)){
         sPriv.iTemp=ds7505.getTemp(7);
-    };
+    }
 }
 
 void vSerialDisplayTemp(int iTemp){
-    /*Serial.print(iTemp/100,DEC);
+    Serial.print(iTemp/100,DEC);
     Serial.print(".");
     Serial.print(iTemp%100,DEC);
-    Serial.println("");*/
+    Serial.println("");
 }
 
 void vLcdDisplayTemp(uint8_t uchX, uint8_t uchY, int iTemp){
@@ -81,6 +95,17 @@ void vLcdDisplayTemp(uint8_t uchX, uint8_t uchY, int iTemp){
     lcd.print(".");
     lcd.print(iTemp%100,DEC);
 }
+
+void vLcdDisplayEEprom(int iIdx, int iTemp){
+    lcd.setCursor(0,0);
+    lcd.print("EEPROM:");
+    lcd.setCursor(0,1);
+    lcd.print("@:");
+    lcd.print(iIdx,DEC);
+    lcd.print(":");
+    lcd.print(iTemp,DEC);
+}
+
 
 void vLcdDisplayCsg(uint8_t uchX, uint8_t uchY){
     lcd.setCursor(uchX,uchY);
@@ -140,11 +165,7 @@ void vLcdDisplayTime(uint8_t uchX, uint8_t uchY){
 }
 
 void vState(){
-
-    Serial.print(eState,DEC);
-    Serial.println("");
     switch (eState){
-
     case eciStateInitDisplay:
         vInitDisplay();
         break;
@@ -165,6 +186,15 @@ void vState(){
     case eciStateConfigHyst:
         vRunConfigHyst();
         break;
+
+    case eciStateInitEEpromRead:
+        vInitEepromRead();
+        break;
+    case eciStateEEpromRead:
+        vRunEepromRead();
+        break;
+
+
 
     case eciStateInitAbout:
         vInitAbout();
@@ -213,10 +243,14 @@ void vInitConfigCfg(){
 }
 
 void vRunConfigCfg(){
-
     switch(button.eRead()){
     case btnLEFT:
         eState=eciStateInitDisplay;
+        lcd.clear();
+        break;
+
+    case btnRIGHT:
+        eState=eciStateInitEEpromRead;
         lcd.clear();
         break;
 
@@ -276,6 +310,11 @@ void vRunConfigHyst(){
         vLcdDisplayConfigHyst(0,0);
         break;
 
+    case btnRIGHT:
+        eState=eciStateInitEEpromRead;
+        lcd.clear();
+        break;
+
     case btnLEFT:
     case btnSELECT:
         lcd.clear();
@@ -284,6 +323,61 @@ void vRunConfigHyst(){
 
     default:
         vLcdDisplayConfigHyst(0,0);
+        break;
+    }
+}
+
+void vInitEepromRead(){
+    switch(button.eRead()){
+    case btnNONE:
+        eState=eciStateEEpromRead;
+        lcd.clear();
+        sPriv.ushAddrEEpromRead=0;
+        vLcdDisplayEEprom(0, 0);
+        break;
+    default:
+        break;
+    }
+}
+
+void vRunEepromRead(){
+
+    uint8_t ushValue;
+
+    switch(button.eRead()){
+
+    case btnUP:
+        ushValue = EEPROM.read(sPriv.ushAddrEEpromRead);
+        lcd.clear();
+        vLcdDisplayEEprom(sPriv.ushAddrEEpromRead, ushValue);
+        sPriv.ushAddrEEpromRead--;
+        if (sPriv.ushAddrEEpromRead == 0) {
+            sPriv.ushAddrEEpromRead = EEPROM.length()-1;
+        }
+        break;
+
+    case btnDOWN:
+        lcd.clear();
+        ushValue = EEPROM.read(sPriv.ushAddrEEpromRead);
+        vLcdDisplayEEprom(sPriv.ushAddrEEpromRead, ushValue);
+        sPriv.ushAddrEEpromRead++;
+        if (sPriv.ushAddrEEpromRead >= EEPROM.length()) {
+            sPriv.ushAddrEEpromRead = 0;
+        }
+        break;
+
+    case btnLEFT:
+        lcd.clear();
+        eState=eciStateInitConfigCsg;
+        break;
+
+    case btnSELECT:
+        lcd.clear();
+        eState=eciStateInitDisplay;
+        break;
+
+    default:
+
         break;
     }
 }

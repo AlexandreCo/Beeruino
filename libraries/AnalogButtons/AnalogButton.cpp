@@ -34,8 +34,7 @@ eBtn_t AnalogButton::eRead()
 {
     int iAdcKeyIn  = 0;
     iAdcKeyIn = analogRead(0);
-    Serial.print(iAdcKeyIn,DEC);
-    Serial.println("");
+
     if (iAdcKeyIn > 1000) return btnNONE;
     if (iAdcKeyIn < 50)   return btnRIGHT;
     if (iAdcKeyIn < 250)  return btnUP;
